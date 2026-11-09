@@ -1,0 +1,15 @@
+{
+  "name": "Star Lanes",
+  "short_name": "Star Lanes",
+  "description": "Steer a spacecraft down floating roads: slide to steer, jump the gaps.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#04050d",
+  "theme_color": "#04050d",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

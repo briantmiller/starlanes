@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Star Lanes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#04050d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Star Lanes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root {
+    --ink: #eef1ff; --dim: #9aa3c7; --panel: rgba(10, 13, 30, .86); --line: rgba(160, 175, 255, .22);
+    --accent: #ffb23e; --st: env(safe-area-inset-top, 0px); --sb: env(safe-area-inset-bottom, 0px);
+    --sl: env(safe-area-inset-left, 0px); --sr: env(safe-area-inset-right, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #04050d; color: var(--ink);
+    font-family: "Avenir Next Condensed", "DIN Alternate", "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; overscroll-behavior: none; }
+  [hidden] { display: none !important; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; touch-action: manipulation; }
+
+  #hud { position: fixed; top: calc(var(--st) + 14px); left: calc(var(--sl) + 18px); right: calc(var(--sr) + 18px);
+    display: flex; align-items: center; gap: 16px; pointer-events: none; }
+  #label { font-size: 15px; letter-spacing: .16em; text-transform: uppercase; white-space: nowrap; text-shadow: 0 1px 6px #000; }
+  #prog { flex: 1; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .14); overflow: hidden; }
+  #bar { height: 100%; width: 0; background: var(--accent); border-radius: 3px; }
+  #pauseBtn { pointer-events: auto; width: 48px; height: 48px; border-radius: 12px; background: var(--panel);
+    border: 1px solid var(--line); font-size: 15px; letter-spacing: .1em; }
+  #hint { position: fixed; left: 0; right: 0; top: calc(var(--st) + 78px); text-align: center; font-size: 17px;
+    letter-spacing: .08em; color: var(--ink); text-shadow: 0 1px 8px #000; pointer-events: none; transition: opacity .8s; }
+  #hint.gone { opacity: 0; }
+
+  #jump { position: fixed; right: calc(var(--sr) + 28px); bottom: calc(var(--sb) + 30px); width: 132px; height: 132px;
+    border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ffd27a, #f08a12 70%); color: #2a1400;
+    font-size: 22px; font-weight: 700; letter-spacing: .14em; box-shadow: 0 6px 0 #8a4a00, 0 10px 28px rgba(0, 0, 0, .55);
+    touch-action: none; }
+  #jump.on { transform: translateY(5px); box-shadow: 0 1px 0 #8a4a00, 0 4px 14px rgba(0, 0, 0, .55); }
+
+  #throttle { position: fixed; left: calc(var(--sl) + 22px); bottom: calc(var(--sb) + 26px); width: 96px; padding: 10px 0 8px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px; touch-action: none; }
+  #throttle .cap { font-size: 12px; letter-spacing: .2em; color: var(--dim); text-transform: uppercase; }
+  #spd { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; text-shadow: 0 1px 6px #000; }
+  #track { position: relative; width: 58px; height: 210px; border-radius: 29px; background: var(--panel);
+    border: 1px solid var(--line); margin: 28px 0; }
+  #track::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 4px; margin-left: -2px;
+    border-radius: 2px; background: linear-gradient(#ff5a3c, #ffb23e 45%, #3fd0ff); opacity: .8; }
+  #knob { position: absolute; left: 50%; width: 76px; height: 56px; margin: 0 0 -28px -38px; border-radius: 14px;
+    background: linear-gradient(#f3f5ff, #a9b3e0); box-shadow: 0 4px 0 #4b5488, 0 8px 18px rgba(0, 0, 0, .5); }
+  #knob::after { content: ""; position: absolute; inset: 24px 16px; border-radius: 2px; background: #4b5488; }
+
+  .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    padding: calc(var(--st) + 20px) calc(var(--sr) + 20px) calc(var(--sb) + 20px) calc(var(--sl) + 20px);
+    background: rgba(3, 4, 12, .62); }
+  .card { width: min(620px, 100%); max-height: 100%; overflow: auto; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 22px; padding: 28px; text-align: center; }
+  h1 { margin: 0; font-size: clamp(40px, 8vw, 68px); letter-spacing: .2em; text-indent: .2em; font-weight: 800; line-height: 1;
+    text-transform: uppercase; background: linear-gradient(#fff, #ffb23e 70%, #ff5a3c); -webkit-background-clip: text;
+    background-clip: text; color: transparent; }
+  .tag { margin: 10px 0 24px; color: var(--dim); font-size: 16px; letter-spacing: .06em; }
+  .diff { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; text-align: left;
+    background: rgba(255, 255, 255, .05); border-left: 5px solid var(--c); margin-top: 12px; }
+  .d0 { --c: #3fd0ff; } .d1 { --c: #ffb23e; } .d2 { --c: #ff5a3c; }
+  .diff .info { flex: 1; min-width: 0; }
+  .diff h2 { margin: 0; font-size: 22px; letter-spacing: .14em; text-transform: uppercase; color: var(--c); }
+  .diff p { margin: 3px 0 0; font-size: 14px; color: var(--dim); }
+  .stepper { display: flex; align-items: center; gap: 2px; font-size: 15px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .stepper button { width: 44px; height: 44px; font-size: 26px; border-radius: 10px; }
+  .stepper button:disabled { opacity: .22; }
+  .stepper span { min-width: 62px; text-align: center; }
+  .play, .big { height: 52px; padding: 0 26px; border-radius: 14px; background: var(--c, var(--accent)); color: #10121f;
+    font-size: 18px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  .ghost { height: 52px; padding: 0 22px; border-radius: 14px; border: 1px solid var(--line); font-size: 16px;
+    letter-spacing: .12em; text-transform: uppercase; }
+  .foot { margin-top: 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; color: var(--dim); font-size: 13px; text-align: left; }
+  .foot .ghost { height: 44px; font-size: 13px; white-space: nowrap; }
+  .card h3 { margin: 0; font-size: 38px; letter-spacing: .16em; text-transform: uppercase; font-weight: 800; }
+  .card .sub { margin: 8px 0 24px; color: var(--dim); font-size: 17px; }
+  .btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  @media (max-width: 520px) { .diff { flex-wrap: wrap; } .diff .info { flex-basis: 100%; } .play { flex: 1; } #jump { width: 104px; height: 104px; font-size: 18px; } }
+  @media (max-height: 520px) { #track { height: 120px; } #jump { width: 104px; height: 104px; font-size: 18px; } }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="hud" hidden>
+  <div id="label"></div>
+  <div id="prog"><div id="bar"></div></div>
+  <button id="pauseBtn" aria-label="Pause">II</button>
+</div>
+<div id="hint" class="gone"></div>
+
+<div id="throttle" hidden>
+  <div id="spd">0</div>
+  <div id="track"><div id="knob"></div></div>
+  <div class="cap">Speed</div>
+</div>
+<button id="jump" hidden>JUMP</button>
+
+<div id="menu" class="screen">
+  <div class="card">
+    <h1>Star Lanes</h1>
+    <p class="tag">Slide to steer. Jump the gaps. Reach the checkered line.</p>
+    <div id="diffs"></div>
+    <div class="foot">
+      <span>Blocks: go around or jump on top. Glowing red tiles destroy the ship. Keyboard: arrows and space.</span>
+      <button id="mute" class="ghost">Sound on</button>
+    </div>
+  </div>
+</div>
+
+<div id="pause" class="screen" hidden>
+  <div class="card">
+    <h3>Paused</h3>
+    <p class="sub">Take a breath.</p>
+    <div class="btns">
+      <button id="resume" class="big">Resume</button>
+      <button id="restart" class="ghost">Restart</button>
+      <button id="toMenu" class="ghost">Menu</button>
+    </div>
+  </div>
+</div>
+
+<div id="over" class="screen" hidden>
+  <div class="card">
+    <h3 id="overTitle"></h3>
+    <p class="sub" id="overSub"></p>
+    <div class="btns">
+      <button id="overPrimary" class="big"></button>
+      <button id="overMenu" class="ghost">Menu</button>
+    </div>
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
