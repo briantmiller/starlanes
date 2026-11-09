@@ -3,9 +3,9 @@
 
 const LANES = 7, RL = 1.8, GRAV = 30, JUMP_V = 9, BLOCK_H = 0.9, LAT = 9, VIEW = 34;
 const DIFFS = [
-  { key: 'easy',   name: 'Easy',   min: 9, max: 9,  maxGap: 3, minW: 3, maxW: 6, throttle: false },
-  { key: 'medium', name: 'Medium', min: 5, max: 14, maxGap: 5, minW: 2, maxW: 5, throttle: true },
-  { key: 'hard',   name: 'Hard',   min: 6, max: 18, maxGap: 7, minW: 2, maxW: 4, throttle: true }
+  { key: 'easy',   name: 'Easy',   min: 6, max: 6,  maxGap: 2, minW: 3, maxW: 6, throttle: false, g: 18, jv: 7 },  // slow, floaty jumps
+  { key: 'medium', name: 'Medium', min: 5, max: 14, maxGap: 5, minW: 2, maxW: 5, throttle: true, g: 30, jv: 9 },
+  { key: 'hard',   name: 'Hard',   min: 6, max: 18, maxGap: 7, minW: 2, maxW: 4, throttle: true, g: 30, jv: 9 }
 ];
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 
@@ -69,7 +69,7 @@ function genLevel(di, n) {
   const segs = {
     road() { range(D.minW, D.maxW, 2); add(ri(5, 11)); },
     gap() {
-      const g = di === 0 ? (rnd() < 0.65 ? 2 : 3) : ri(2, D.maxGap);
+      const g = di === 0 ? (n >= 5 && rnd() < 0.25 ? 3 : 2) : ri(2, D.maxGap);
       voidRows(g);
       range(Math.max(2, D.minW), D.maxW, 1);
       add(ri(6, 9) + (g > 4 ? 4 : 0));
@@ -95,7 +95,7 @@ function genLevel(di, n) {
   const keys = Object.keys(weights), total = keys.reduce((s, k) => s + weights[k], 0);
   const pick = () => { let x = rnd() * total; for (const k of keys) { x -= weights[k]; if (x < 0) return k; } return 'road'; };
 
-  const target = Math.min(640, 260 + n * 40);
+  const target = di === 0 ? Math.min(420, 180 + n * 30) : Math.min(640, 260 + n * 40);
   add(14);
   lo = di === 0 ? 1 : 2; hi = di === 0 ? 5 : 4;   // gentle, centred opening
   add(8);
@@ -126,6 +126,7 @@ if (typeof document !== 'undefined') (function () {
   /* ---------- saved progress (per browser; fine if unavailable) ---------- */
   let save = { unlocked: [1, 1, 1], mute: false };
   try { const s = JSON.parse(localStorage.getItem('starlanes.v1')); if (s && s.unlocked) save = s; } catch (e) {}
+  save.ship = clamp(save.ship | 0, 0, 3); save.color = clamp(save.color | 0, 0, 7);
   const persist = () => { try { localStorage.setItem('starlanes.v1', JSON.stringify(save)); } catch (e) {} };
   const chosen = save.unlocked.slice();
 
@@ -153,6 +154,45 @@ if (typeof document !== 'undefined') (function () {
     win: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'square', 0.05, 0, i * 0.11))
   };
 
+  /* ---------- ships ---------- */
+  const ring = (r, y, n) => { const a = []; for (let i = 0; i < n; i++) a.push([Math.cos(i / n * 6.2832) * r, y, Math.sin(i / n * 6.2832) * r]); return a; };
+  const pod = (x, w, len) => { const n = [x, 0.05, len], l = [x - w, 0, -0.38], r = [x + w, 0, -0.38], t = [x, 0.1 + w * 0.7, -0.33];
+    return [['l', n, l, t], ['m', n, r, t], ['d', l, r, t]]; };
+  // faces are listed back-to-front as seen from behind; roles: l light, m mid, d dark, a accent
+  const SHIPS = [
+    { name: 'Dart', eng: [[-0.16, 0.09, -0.38, 0.09], [0.16, 0.09, -0.38, 0.09]],
+      faces: [...pod(0, 0.4, 0.62).map((f, i) => i < 2 ? [f[0], f[1], f[2], [0, 0.28, -0.32]] : [f[0], f[1], f[2], [0, 0.28, -0.32]]),
+              ['a', [0, 0.19, 0.05], [-0.1, 0.16, -0.2], [0.1, 0.16, -0.2]]] },
+    { name: 'Rocket', eng: [[0, 0.1, -0.38, 0.13]],
+      faces: [['a', [-0.13, 0.05, 0], [-0.44, 0, -0.46], [-0.13, 0.05, -0.38]], ['a', [0.13, 0.05, 0], [0.44, 0, -0.46], [0.13, 0.05, -0.38]],
+              ['l', [0, 0.1, 0.72], [-0.17, 0.02, -0.38], [0, 0.3, -0.38]], ['m', [0, 0.1, 0.72], [0.17, 0.02, -0.38], [0, 0.3, -0.38]],
+              ['d', [-0.17, 0.02, -0.38], [0.17, 0.02, -0.38], [0, 0.3, -0.38]],
+              ['a', [0, 0.2, 0.3], [-0.06, 0.2, 0.02], [0.06, 0.2, 0.02]]] },
+    { name: 'Twin', eng: [[-0.28, 0.07, -0.38, 0.08], [0.28, 0.07, -0.38, 0.08]],
+      faces: [['d', [-0.2, 0.06, 0.15], [0.2, 0.06, 0.15], [0.2, 0.06, -0.32], [-0.2, 0.06, -0.32]],
+              ...pod(-0.3, 0.15, 0.6), ...pod(0.3, 0.15, 0.6),
+              ['a', [0, 0.1, 0.12], [-0.09, 0.15, -0.26], [0.09, 0.15, -0.26]]] },
+    { name: 'Saucer', eng: [[0, 0.03, -0.4, 0.1]],
+      faces: [['m', ...ring(0.45, 0.05, 16)], ['d', ...ring(0.33, 0.08, 14)], ['a', ...ring(0.22, 0.13, 12)], ['l', ...ring(0.1, 0.27, 10)]] }
+  ];
+  const COLORS = [['Silver', 228, 45, 92, 78, 34], ['Red', 2, 85, 66, 52, 27], ['Orange', 28, 95, 64, 52, 28], ['Yellow', 50, 95, 66, 54, 30],
+                  ['Green', 130, 62, 62, 46, 24], ['Blue', 208, 90, 68, 52, 28], ['Purple', 275, 75, 72, 56, 28], ['Pink', 325, 85, 76, 62, 32]];
+  const paint = i => { const c = COLORS[i]; return { l: `hsl(${c[1]} ${c[2]}% ${c[3]}%)`, m: `hsl(${c[1]} ${c[2]}% ${c[4]}%)`,
+    d: `hsl(${c[1]} ${c[2] * 0.6}% ${c[5]}%)`, a: c[0] === 'Blue' ? '#fff3b0' : '#19b6ff' }; };
+  function paintShip(c, P, model, col, fl, px) {
+    const poly = (pts, color) => {
+      c.beginPath(); pts.forEach((v, i) => { const q = P(v[0], v[1], v[2]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
+      c.closePath(); c.fillStyle = color; c.fill(); c.strokeStyle = color; c.stroke();
+    };
+    for (const e of model.eng) {
+      poly([[e[0] - e[3], e[1], e[2]], [e[0] + e[3], e[1], e[2]], [e[0], e[1], e[2] - fl]], '#ff8a1e');
+      poly([[e[0] - e[3] / 2, e[1] + 0.01, e[2]], [e[0] + e[3] / 2, e[1] + 0.01, e[2]], [e[0], e[1] + 0.01, e[2] - fl * 0.6]], '#fff1a8');
+    }
+    for (const f of model.faces) poly(f.slice(1), col[f[0]]);
+    c.fillStyle = '#ffd36a';
+    for (const e of model.eng) { const q = P(e[0], e[1], e[2]); c.beginPath(); c.arc(q[0], q[1], e[3] * 0.65 * px, 0, 6.3); c.fill(); }
+  }
+
   /* ---------- state ---------- */
   let state = 'menu';           // menu | play | paused | dead | won
   let L = genLevel(0, 1), theme = makeTheme(L.hue);
@@ -160,7 +200,7 @@ if (typeof document !== 'undefined') (function () {
               coyote: 0, jbuf: 0, jheld: false, bank: 0, deadT: 0, time: 0 };
   const cam = { x: 3.5, y: 2.3 };
   const keys = {};
-  let parts = [], shipScreen = [0, 0];
+  let parts = [], shipScreen = [0, 0], shipCol;
 
   function makeTheme(h) {
     const c = (dh, s, l) => `hsl(${(h + dh) % 360} ${s}% ${l}%)`;
@@ -270,14 +310,14 @@ if (typeof document !== 'undefined') (function () {
       if (c && c.h <= S.y + 0.3 && c.h > g) g = c.h;
     }
     if (S.y > g + 1e-6 || S.vy > 0) {
-      S.vy -= GRAV * dt; S.y += S.vy * dt; S.ground = false;
+      S.vy -= D.g * dt; S.y += S.vy * dt; S.ground = false;
       if (S.y <= g && S.vy <= 0) { S.y = g; S.vy = 0; S.ground = true; }
     } else { S.y = g; S.vy = 0; S.ground = true; }
     S.coyote = S.ground ? 0.08 : S.coyote - dt;
     S.jbuf -= dt;
 
     if ((S.jbuf > 0 || S.jheld || keys[' ']) && (S.ground || S.coyote > 0) && S.vy <= 0) {
-      S.vy = JUMP_V; S.ground = false; S.coyote = 0; S.jbuf = 0; sfx.jump();
+      S.vy = D.jv; S.ground = false; S.coyote = 0; S.jbuf = 0; sfx.jump();
     }
     if (S.ground) { const c = cellAt(S.x, S.z); if (c && c.t === 1) { die('crash'); return; } }
     if (S.y < -6) { die('fall'); return; }
@@ -387,21 +427,7 @@ if (typeof document !== 'undefined') (function () {
         const d = f / (zc + lz - cz);
         return [hw + (S.x + lx * ca - ly * sa - cx) * d, hor + (cy - (S.y + 0.14 + lx * sa + ly * ca)) * d];
       };
-      const tri = (p, q, r2, col) => {
-        ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.lineTo(r2[0], r2[1]); ctx.closePath();
-        ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = col; ctx.stroke();
-      };
-      const N = P(0, 0.04, 0.62), Lw = P(-0.4, 0, -0.38), Rw = P(0.4, 0, -0.38), T = P(0, 0.28, -0.32),
-            C = P(0, 0.19, 0.05), Cl = P(-0.1, 0.16, -0.2), Cr = P(0.1, 0.16, -0.2);
-      const fl = 0.35 + S.speed * 0.035 + Math.random() * 0.12;
-      tri(P(-0.2, 0.08, -0.38), P(0.2, 0.08, -0.38), P(0, 0.08, -0.38 - fl), '#ff8a1e');
-      tri(P(-0.1, 0.09, -0.38), P(0.1, 0.09, -0.38), P(0, 0.09, -0.38 - fl * 0.6), '#fff1a8');
-      tri(N, Lw, T, '#e6ecff'); tri(N, Rw, T, '#aeb9e8');
-      tri(Lw, Rw, T, '#39426e');
-      tri(C, Cl, Cr, '#19b6ff');
-      const e1 = P(-0.16, 0.09, -0.38), e2 = P(0.16, 0.09, -0.38), er = 0.06 * d0;
-      ctx.fillStyle = '#ffd36a';
-      ctx.beginPath(); ctx.arc(e1[0], e1[1], er, 0, 6.3); ctx.arc(e2[0], e2[1], er, 0, 6.3); ctx.fill();
+      paintShip(ctx, P, SHIPS[save.ship], shipCol, 0.35 + S.speed * 0.035 + Math.random() * 0.12, d0);
     }
 
     // explosion
@@ -500,15 +526,39 @@ if (typeof document !== 'undefined') (function () {
   document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') togglePause(); });
 
   // keep iOS from scrolling, zooming or selecting during play
-  document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+  document.addEventListener('touchmove', e => { if (!(e.target.closest && e.target.closest('.card'))) e.preventDefault(); }, { passive: false });
   document.addEventListener('gesturestart', e => e.preventDefault());
   document.addEventListener('contextmenu', e => e.preventDefault());
 
   /* ---------- menu ---------- */
-  const BLURB = ['Fixed cruising speed. Short gaps, wide roads.',
+  const BLURB = ['Slow and steady. Floaty jumps, short gaps.',
                  'You set the speed. Longer gaps, burning tiles.',
                  'Faster ship, narrow roads, long jumps.'];
+  function renderHangar() {
+    shipCol = paint(save.color);
+    const sb = $('ships'), cb = $('colors'); sb.textContent = ''; cb.textContent = '';
+    SHIPS.forEach((m, i) => {
+      const b = document.createElement('button'); b.className = 'ship' + (i === save.ship ? ' sel' : '');
+      b.setAttribute('aria-label', m.name + ' ship'); b.setAttribute('aria-pressed', i === save.ship);
+      const c = document.createElement('canvas'); c.width = 176; c.height = 132;
+      const x = c.getContext('2d'); x.lineJoin = 'round';
+      const P = (lx, ly, lz) => { const p = 3 / (3 + lz); return [88 + lx * 150 * p, 86 - (ly * 150 + lz * 60) * p]; };
+      paintShip(x, P, m, shipCol, 0.3, 150);
+      const t = document.createElement('span'); t.textContent = m.name;
+      b.append(c, t);
+      b.onclick = () => { save.ship = i; persist(); renderHangar(); };
+      sb.append(b);
+    });
+    COLORS.forEach((c, i) => {
+      const b = document.createElement('button'); b.className = 'sw' + (i === save.color ? ' sel' : '');
+      b.style.background = `hsl(${c[1]} ${c[2]}% ${c[4]}%)`;
+      b.setAttribute('aria-label', c[0]); b.setAttribute('aria-pressed', i === save.color);
+      b.onclick = () => { save.color = i; persist(); renderHangar(); };
+      cb.append(b);
+    });
+  }
   function renderMenu() {
+    renderHangar();
     const box = $('diffs'); box.textContent = '';
     DIFFS.forEach((D, i) => {
       const row = document.createElement('div'); row.className = 'diff d' + i;
