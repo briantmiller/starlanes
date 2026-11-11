@@ -1,5 +1,5 @@
 // Offline cache for Star Lanes. Bump CACHE when you change any file.
-const CACHE = 'starlanes-v2';
+const CACHE = 'starlanes-v3';
 const FILES = ['./', 'index.html', 'game.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

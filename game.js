@@ -19,23 +19,30 @@ function mulberry32(a) {
 }
 
 /* ---------- Level generator ----------
-   A level is an array of rows; each row has 7 cells: null (void) or {h, t}.
-   h = surface height, t = 0 road, 1 burning, 2 block, 3 finish line. */
-function genLevel(di, n) {
-  const D = DIFFS[di];
-  const rnd = mulberry32(di * 7919 + n * 104729 + 17);
+   A level is an array of rows; each row has 7 cells: null (void) or {h, t, tn}.
+   h = surface height; t = 0 road, 1 burning, 2 block, 3 finish line, 4 road-ends warning;
+   tn = glass tunnel over the cell. n = 0 builds an endless road that grows on demand. */
+const CB = 0.62, CT = 0.8;                       // tunnel ceiling underside / roof top
+const hits = (c, y) => !!c && (c.h > y + 0.3 || (!!c.tn && y > CB - 0.35 && y < CT - 0.3));
+const floorOf = (c, y) => !c ? -Infinity : (c.tn && y >= CT - 0.3) ? CT : (c.h <= y + 0.3 ? c.h : -Infinity);
+
+function makeLevel(di, n, seed) {
+  const D = DIFFS[di], endless = n === 0;
+  const rnd = mulberry32(seed);
   const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
   const rows = [];
   let lo = 0, hi = LANES - 1;
+  const lvl = () => endless ? 1 + Math.floor(rows.length / 120) : n;   // endless ramps up with distance
 
+  const blank = () => new Array(LANES).fill(null);
   const add = (cnt, h = 0, t = 0) => {
     for (let i = 0; i < cnt; i++) {
-      const r = new Array(LANES).fill(null);
+      const r = blank();
       for (let l = lo; l <= hi; l++) r[l] = { h, t };
       rows.push(r);
     }
   };
-  const voidRows = cnt => { for (let i = 0; i < cnt; i++) rows.push(new Array(LANES).fill(null)); };
+  const voidRows = cnt => { for (let i = 0; i < cnt; i++) rows.push(blank()); };
   // Pick the next lane range, always overlapping the previous one so it is reachable.
   const range = (minW, maxW, shift) => {
     const pw = hi - lo + 1, w = ri(minW, maxW);
@@ -69,7 +76,7 @@ function genLevel(di, n) {
   const segs = {
     road() { range(D.minW, D.maxW, 2); add(ri(5, 11)); },
     gap() {
-      const g = di === 0 ? (n >= 5 && rnd() < 0.25 ? 3 : 2) : ri(2, D.maxGap);
+      const g = di === 0 ? (lvl() >= 5 && rnd() < 0.25 ? 3 : 2) : ri(2, D.maxGap);
       voidRows(g);
       range(Math.max(2, D.minW), D.maxW, 1);
       add(ri(6, 9) + (g > 4 ? 4 : 0));
@@ -85,35 +92,82 @@ function genLevel(di, n) {
         range(2, 3, di === 0 ? 1 : 2);
         add(ri(4, 5));
       }
-    }
+    },
+    // Glass tunnel: no jumping inside. On Medium/Hard the road beside it falls away,
+    // so you fly through it (or land on its roof).
+    tunnel() {
+      add(3);
+      const w = Math.min([2, ri(1, 2), 1][di], hi - lo + 1), t0 = ri(lo, hi - w + 1), t1 = t0 + w - 1;
+      for (let i = ri(6, 12); i > 0; i--) {
+        const r = blank();
+        for (let l = lo; l <= hi; l++) {
+          if (l >= t0 && l <= t1) r[l] = { h: 0, t: 0, tn: 1 };
+          else if (di === 0) r[l] = { h: 0, t: 0 };
+        }
+        rows.push(r);
+      }
+      if (di > 0) { lo = t0; hi = t1; }
+      add(4);
+    },
+    // The road ends; a parallel road runs alongside across an empty strip. Jump sideways onto it.
+    split() {
+      const wa = 2;
+      let gw = [1, ri(1, 2), 2][di], wb = ri(2, 3), dir = rnd() < 0.5 ? -1 : 1;
+      const fits = d => d > 0 ? lo + wa - 1 + gw + wb <= LANES - 1 : hi - wa + 1 - gw - wb >= 0;
+      let ok = false;
+      for (const [g2, w2] of [[gw, wb], [gw, 2], [1, 2]]) {
+        gw = g2; wb = w2;
+        if (fits(dir)) { ok = true; break; }
+        if (fits(-dir)) { dir = -dir; ok = true; break; }
+      }
+      if (!ok) { segs.road(); return; }            // no room beside a one-tile bridge
+      let a0, a1, b0, b1;
+      if (dir > 0) { a0 = lo; a1 = lo + wa - 1; b0 = a1 + 1 + gw; b1 = b0 + wb - 1; }
+      else { a1 = hi; a0 = hi - wa + 1; b1 = a0 - 1 - gw; b0 = b1 - wb + 1; }
+      lo = a0; hi = a1; add(3);
+      const ov = [8, 6, 5][di] + ri(0, 2);
+      for (let i = 0; i < ov; i++) {
+        const r = blank();
+        for (let l = a0; l <= a1; l++) r[l] = { h: 0, t: i === ov - 1 ? 4 : 0 };
+        for (let l = b0; l <= b1; l++) r[l] = { h: 0, t: 0 };
+        rows.push(r);
+      }
+      lo = b0; hi = b1; add([6, 7, 9][di] + ri(0, 2));
+    },
+    bridge() { range(1, 1, 1); add(ri(5, 8)); }       // one tile wide
   };
-  const weights = [
-    { road: 3, gap: 3, blocks: 2, wall: 1, raised: 1, islands: n >= 2 ? 1 : 0, burn: n >= 3 ? 1 : 0 },
-    { road: 2, gap: 3, blocks: 3, burn: 2, wall: 1.5, raised: 1.5, islands: 2 },
-    { road: 1, gap: 3.5, blocks: 3, burn: 3, wall: 2, raised: 2, islands: 3 }
+  const weightsFor = v => [
+    { road: 3, gap: 3, blocks: 2, wall: 1, raised: 1, tunnel: 1.5, split: v >= 2 ? 1.5 : 0, islands: v >= 2 ? 1 : 0, burn: v >= 3 ? 1 : 0 },
+    { road: 2, gap: 3, blocks: 3, burn: 2, wall: 1.5, raised: 1.5, islands: 2, tunnel: 2, split: 2, bridge: 1 },
+    { road: 1, gap: 3.5, blocks: 3, burn: 3, wall: 2, raised: 2, islands: 3, tunnel: 2.5, split: 2.5, bridge: 2 }
   ][di];
-  const keys = Object.keys(weights), total = keys.reduce((s, k) => s + weights[k], 0);
-  const pick = () => { let x = rnd() * total; for (const k of keys) { x -= weights[k]; if (x < 0) return k; } return 'road'; };
+  const pick = () => {
+    const w = weightsFor(lvl()), keys = Object.keys(w);
+    let x = rnd() * keys.reduce((a, k) => a + w[k], 0);
+    for (const k of keys) { x -= w[k]; if (x < 0) return k; }
+    return 'road';
+  };
+  let last = '';
+  const more = () => { let s = pick(); if (s === last) s = pick(); segs[s](); last = s; };
 
-  const target = di === 0 ? Math.min(420, 180 + n * 30) : Math.min(640, 260 + n * 40);
   add(14);
   lo = di === 0 ? 1 : 2; hi = di === 0 ? 5 : 4;   // gentle, centred opening
   add(8);
-  let last = '';
-  while (rows.length < target) {
-    let s = pick();
-    if (s === last) s = pick();
-    segs[s](); last = s;
-  }
+  const L = { rows, finishRow: Infinity, endless, more,
+              hue: 160 + (endless ? ri(0, 149) : (di * 95 + n * 47) % 150) };   // green..magenta, never burning red
+  if (endless) { while (rows.length < 120) more(); return L; }
+  const target = di === 0 ? Math.min(420, 180 + n * 30) : Math.min(640, 260 + n * 40);
+  while (rows.length < target) more();
   lo = 0; hi = LANES - 1;
   add(6);
-  const finishRow = rows.length;
+  L.finishRow = rows.length;
   add(1, 0, 3);
   add(16);
-  return { rows, finishRow, hue: 160 + (di * 95 + n * 47) % 150 }   // green..magenta, never the red of burning tiles;
+  return L;
 }
+const genLevel = (di, n) => makeLevel(di, n, n === 0 ? (Math.random() * 2147483647) | 0 : di * 7919 + n * 104729 + 17);
 
-if (typeof module !== 'undefined') module.exports = { genLevel, DIFFS, LANES };
+if (typeof module !== 'undefined') module.exports = { genLevel, makeLevel, DIFFS, LANES };
 
 /* ====================================================================== */
 if (typeof document !== 'undefined') (function () {
@@ -121,12 +175,14 @@ if (typeof document !== 'undefined') (function () {
   const cv = $('cv'), ctx = cv.getContext('2d');
   const elMenu = $('menu'), elOver = $('over'), elPause = $('pause'), elHud = $('hud'),
         elJump = $('jump'), elThr = $('throttle'), elKnob = $('knob'), elSpd = $('spd'),
-        elBar = $('bar'), elLabel = $('label'), elHint = $('hint');
+        elBar = $('bar'), elLabel = $('label'), elHint = $('hint'),
+        elPad = $('pad'), elPadKnob = $('padKnob'), elDist = $('dist'), elProg = $('prog');
 
   /* ---------- saved progress (per browser; fine if unavailable) ---------- */
   let save = { unlocked: [1, 1, 1], mute: false };
   try { const s = JSON.parse(localStorage.getItem('starlanes.v1')); if (s && s.unlocked) save = s; } catch (e) {}
   save.ship = clamp(save.ship | 0, 0, 3); save.color = clamp(save.color | 0, 0, 7);
+  if (!Array.isArray(save.best)) save.best = [0, 0, 0];
   const persist = () => { try { localStorage.setItem('starlanes.v1', JSON.stringify(save)); } catch (e) {} };
   const chosen = save.unlocked.slice();
 
@@ -208,6 +264,7 @@ if (typeof document !== 'undefined') (function () {
       top: [c(0, 52, 50), c(0, 52, 43)], front: c(0, 48, 25), side: c(0, 48, 19),
       rtop: [c(28, 58, 62), c(28, 58, 55)], rfront: c(28, 50, 32), rside: c(28, 50, 25),
       btop: [c(260, 65, 64), c(260, 65, 64)], bfront: c(260, 55, 42), bside: c(260, 55, 32),
+      glass: c(260, 75, 72), lintel: c(260, 70, 56),
       glow: c(200, 70, 26)
     };
   }
@@ -221,7 +278,9 @@ if (typeof document !== 'undefined') (function () {
     setThrottle(0.5);
     elThr.hidden = !DIFFS[di].throttle;
     elLabel.textContent = `${DIFFS[di].name} · Road ${n}`;
-    elHint.textContent = DIFFS[di].throttle ? 'Slide to steer · Jump on the right · Speed on the left'
+    elDist.hidden = !L.endless; elProg.style.visibility = L.endless ? 'hidden' : '';
+    steerId = null; elPad.hidden = true;
+    elHint.textContent = DIFFS[di].throttle ? 'Slide left and right to steer, up and down for speed · Jump on the right'
                                             : 'Slide anywhere to steer · Jump on the right';
     elHint.classList.remove('gone');
     setState('play');
@@ -248,6 +307,8 @@ if (typeof document !== 'undefined') (function () {
 
   function die(kind) {
     if (state !== 'play') return;
+    elPad.hidden = true;
+    if (L.endless && Math.floor(S.z) > save.best[S.di]) { save.best[S.di] = Math.floor(S.z); persist(); }
     state = 'dead'; S.deadT = 0; S.kind = kind; elHint.classList.add('gone');
     elJump.hidden = true; elThr.hidden = true;
     if (kind === 'crash') {
@@ -283,34 +344,32 @@ if (typeof document !== 'undefined') (function () {
     if (keys.ArrowRight) S.tx = S.x + 1;
     S.tx = clamp(S.tx, 0.3, LANES - 0.3);
 
+    if (L.endless && S.z + VIEW + 30 > L.rows.length) L.more();
     const tgt = D.min + (D.max - D.min) * (D.throttle ? S.throttle : 0);
     S.speed += clamp(tgt - S.speed, -9 * dt, 7 * dt);
 
-    // steering; walls taller than the ship stop sideways motion
+    // steering; walls, blocks and tunnel sides stop sideways motion
     let nx = S.x + clamp(S.tx - S.x, -LAT * dt, LAT * dt);
     if (nx !== S.x) {
-      const c = cellAt(nx + (nx > S.x ? 0.25 : -0.25), S.z);
-      if (c && c.h > S.y + 0.3) { nx = S.x; S.tx = S.x; }
+      const here = cellAt(S.x, S.z), c = cellAt(nx + (nx > S.x ? 0.25 : -0.25), S.z);
+      const wall = S.y < CT - 0.3 && !!(here && here.tn) !== !!(c && c.tn);
+      if (hits(c, S.y) || wall) { nx = S.x; S.tx = S.x; }
     }
     S.bank += ((nx - S.x) / dt / LAT - S.bank) * Math.min(1, dt * 12);
     S.x = nx;
 
-    // forward; running nose-first into anything taller is a crash
+    // forward; running nose-first into a block, a ledge or a tunnel rim is a crash
     const nz = S.z + S.speed * dt;
-    for (const p of [-0.2, 0.2]) {
-      const c = cellAt(S.x + p, nz + 0.3);
-      if (c && c.h > S.y + 0.3) { die('crash'); return; }
-    }
+    for (const p of [-0.2, 0.2]) if (hits(cellAt(S.x + p, nz + 0.3), S.y)) { die('crash'); return; }
     S.z = nz;
 
-    // ground under the ship
+    // ground under the ship (a tunnel roof counts when you are above it)
     let g = -Infinity;
-    for (const p of [-0.2, 0.2]) {
-      const c = cellAt(S.x + p, S.z);
-      if (c && c.h <= S.y + 0.3 && c.h > g) g = c.h;
-    }
+    for (const p of [-0.2, 0.2]) { const f = floorOf(cellAt(S.x + p, S.z), S.y); if (f > g) g = f; }
     if (S.y > g + 1e-6 || S.vy > 0) {
+      const here = cellAt(S.x, S.z), inTube = here && here.tn && S.y < CT - 0.3;
       S.vy -= D.g * dt; S.y += S.vy * dt; S.ground = false;
+      if (inTube && S.y > CB - 0.35) { S.y = CB - 0.35; if (S.vy > 0) S.vy = 0; }   // bump the ceiling
       if (S.y <= g && S.vy <= 0) { S.y = g; S.vy = 0; S.ground = true; }
     } else { S.y = g; S.vy = 0; S.ground = true; }
     S.coyote = S.ground ? 0.08 : S.coyote - dt;
@@ -378,6 +437,7 @@ if (typeof document !== 'undefined') (function () {
       if (c.t === 1) { top = burnA; front = '#6b1206'; side = '#4a0c04'; }
       else if (c.t === 2) { top = theme.btop[ck]; front = theme.bfront; side = theme.bside; }
       else if (c.t === 3) { top = ck ? '#f4f6ff' : '#1a1d2e'; front = theme.front; side = theme.side; }
+      else if (c.t === 4) { top = l & 1 ? '#ffcc33' : '#3a3210'; front = theme.front; side = theme.side; }
       else if (h > 0) { top = theme.rtop[ck]; front = theme.rfront; side = theme.rside; }
       else { top = theme.top[ck]; front = theme.front; side = theme.side; }
       if (cx < x0) {
@@ -392,6 +452,18 @@ if (typeof document !== 'undefined') (function () {
         if (nh < h) quad(x0, h, z0, x1, h, z0, x1, nh, z0, x0, nh, z0, front);
       }
       quad(x0, h, z0, x1, h, z0, x1, h, z1, x0, h, z1, top, GRID);
+      if (c.tn) {                              // glass tunnel: see-through sides and roof, solid rim at the mouth
+        const ga = ctx.globalAlpha, lt = row[l - 1], rt = row[l + 1];
+        ctx.globalAlpha = ga * 0.36;
+        if (!(lt && lt.tn)) quad(x0, h, z0, x0, h, z1, x0, CT, z1, x0, CT, z0, theme.glass, '#fff');
+        if (!(rt && rt.tn)) quad(x1, h, z0, x1, h, z1, x1, CT, z1, x1, CT, z0, theme.glass, '#fff');
+        quad(x0, CT, z0, x1, CT, z0, x1, CT, z1, x0, CT, z1, theme.glass, '#fff');
+        ctx.globalAlpha = ga;
+        if (!clipped) {
+          const nb = r > 0 ? rows[r - 1][l] : null;
+          if (!(nb && nb.tn)) quad(x0, CB, z0, x1, CB, z0, x1, CT, z0, x0, CT, z0, theme.lintel);
+        }
+      }
     }
 
     const below = S.y < -0.05;
@@ -417,8 +489,9 @@ if (typeof document !== 'undefined') (function () {
       const zc = S.z * RL, d0 = f / (zc - cz);
       shipScreen = [hw + (S.x - cx) * d0, hor + (cy - S.y - 0.15) * d0];
       const c = cellAt(S.x, S.z);
-      if (c && c.h <= S.y + 0.3) {           // shadow
-        const sy = hor + (cy - c.h) * d0, rx = 0.36 * d0;
+      const fh = floorOf(c, S.y);
+      if (fh > -1) {                          // shadow
+        const sy = hor + (cy - fh) * d0, rx = 0.36 * d0;
         ctx.fillStyle = 'rgba(0,0,0,.38)';
         ctx.beginPath(); ctx.ellipse(shipScreen[0], sy, rx, rx * 0.3, 0, 0, 6.3); ctx.fill();
       }
@@ -454,7 +527,8 @@ if (typeof document !== 'undefined') (function () {
       if (S.kind === 'fall') { S.vy -= GRAV * dt; S.y += S.vy * dt; S.z += S.speed * dt * 0.5; }
       if (S.deadT > 0.9 && elOver.hidden)
         showOver(S.kind === 'crash' ? 'Crashed' : 'Lost in space',
-                 `${Math.floor(100 * clamp(S.z / L.finishRow, 0, 1))}% of Road ${S.n}`, 'Try again', () => startLevel(S.di, S.n));
+                 L.endless ? `${Math.floor(S.z)} tiles · best ${save.best[S.di]}` : `${Math.floor(100 * clamp(S.z / L.finishRow, 0, 1))}% of Road ${S.n}`,
+                 'Try again', () => startLevel(S.di, S.n));
     } else if (state === 'won') {
       S.deadT += dt; S.speed *= Math.pow(0.08, dt); S.z += S.speed * dt; S.bank *= 0.9;
       if (S.y > 0 || S.vy > 0) { S.vy -= GRAV * dt; S.y = Math.max(0, S.y + S.vy * dt); }
@@ -466,23 +540,47 @@ if (typeof document !== 'undefined') (function () {
     cam.x += (3.5 + (S.x - 3.5) * 0.75 - cam.x) * Math.min(1, dt * 8);
     cam.y += (2.3 + Math.max(S.y, -1) * 0.6 - cam.y) * Math.min(1, dt * 6);
     draw(now);
-    elBar.style.width = (100 * clamp(S.z / L.finishRow, 0, 1)).toFixed(1) + '%';
+    if (L.endless) elDist.textContent = Math.floor(S.z) + ' tiles';
+    else elBar.style.width = (100 * clamp(S.z / L.finishRow, 0, 1)).toFixed(1) + '%';
     if (!elThr.hidden) elSpd.textContent = Math.round(S.speed * 10);
   }
   requestAnimationFrame(frame);
 
-  /* ---------- input ---------- */
-  let steerId = null, sx0 = 0, tx0 = 0;
+  /* ---------- input ----------
+     One finger does it all: slide sideways to steer and (Medium/Hard) up or down for speed. */
+  let steerId = null, sx0 = 0, sy0 = 0, tx0 = 0, th0 = 0, px0 = 0, py0 = 0;
+  const TH_RANGE = 170, TH_DEAD = 12, EDGE = 0.3;
+  const movePad = e => {
+    let dx = e.clientX - px0, dy = e.clientY - py0;
+    const m = Math.hypot(dx, dy), R = 58;
+    if (m > R) { dx *= R / m; dy *= R / m; }
+    elPadKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  };
   cv.addEventListener('pointerdown', e => {
     if (state !== 'play' || steerId !== null) return;
-    steerId = e.pointerId; sx0 = e.clientX; tx0 = S.x; S.tx = S.x;
+    steerId = e.pointerId; sx0 = px0 = e.clientX; sy0 = py0 = e.clientY; tx0 = S.x; S.tx = S.x; th0 = S.throttle;
     try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+    if (DIFFS[S.di].throttle) { elPad.style.left = px0 + 'px'; elPad.style.top = py0 + 'px'; elPad.hidden = false; movePad(e); }
   });
   cv.addEventListener('pointermove', e => {
     if (e.pointerId !== steerId || state !== 'play') return;
-    S.tx = clamp(tx0 + (e.clientX - sx0) * LANES / (window.innerWidth * 0.5), 0.3, LANES - 0.3);
+    const k = LANES / (window.innerWidth * 0.5);
+    let tx = tx0 + (e.clientX - sx0) * k;
+    // at either limit, re-anchor so reversing direction responds immediately
+    if (tx < EDGE) { tx = EDGE; tx0 = EDGE; sx0 = e.clientX; }
+    else if (tx > LANES - EDGE) { tx = LANES - EDGE; tx0 = tx; sx0 = e.clientX; }
+    S.tx = tx;
+    if (DIFFS[S.di].throttle) {
+      let dy = sy0 - e.clientY;
+      dy = Math.abs(dy) > TH_DEAD ? dy - Math.sign(dy) * TH_DEAD : 0;
+      let th = th0 + dy / TH_RANGE;
+      if (th >= 1) { th = 1; th0 = 1; sy0 = e.clientY + TH_DEAD; }
+      else if (th <= 0) { th = 0; th0 = 0; sy0 = e.clientY - TH_DEAD; }
+      setThrottle(th);
+      movePad(e);
+    }
   });
-  const endSteer = e => { if (e.pointerId === steerId) steerId = null; };
+  const endSteer = e => { if (e.pointerId === steerId) { steerId = null; elPad.hidden = true; } };
   cv.addEventListener('pointerup', endSteer); cv.addEventListener('pointercancel', endSteer);
 
   elJump.addEventListener('pointerdown', e => { e.preventDefault(); S.jbuf = 0.15; S.jheld = true; elJump.classList.add('on'); });
@@ -491,16 +589,8 @@ if (typeof document !== 'undefined') (function () {
 
   function setThrottle(v) {
     S.throttle = clamp(v, 0, 1);
-    elKnob.style.bottom = (S.throttle * 100) + '%';
+    elKnob.style.height = (S.throttle * 100) + '%';
   }
-  let thrId = null;
-  const thrMove = e => {
-    const r = $('track').getBoundingClientRect();
-    setThrottle(1 - (e.clientY - r.top) / r.height);
-  };
-  elThr.addEventListener('pointerdown', e => { e.preventDefault(); thrId = e.pointerId; try { elThr.setPointerCapture(thrId); } catch (err) {} thrMove(e); });
-  elThr.addEventListener('pointermove', e => { if (e.pointerId === thrId) thrMove(e); });
-  ['pointerup', 'pointercancel'].forEach(n => elThr.addEventListener(n, e => { if (e.pointerId === thrId) thrId = null; }));
 
   window.addEventListener('keydown', e => {
     keys[e.key] = true;
@@ -571,9 +661,9 @@ if (typeof document !== 'undefined') (function () {
       dn.textContent = '‹'; up.textContent = '›';
       dn.setAttribute('aria-label', 'Previous road'); up.setAttribute('aria-label', 'Next road');
       const sync = () => {
-        chosen[i] = clamp(chosen[i], 1, save.unlocked[i]);
-        lab.textContent = 'Road ' + chosen[i];
-        dn.disabled = chosen[i] <= 1; up.disabled = chosen[i] >= save.unlocked[i];
+        chosen[i] = clamp(chosen[i], 0, save.unlocked[i]);
+        lab.textContent = chosen[i] ? 'Road ' + chosen[i] : 'Road 0 ∞';
+        dn.disabled = chosen[i] <= 0; up.disabled = chosen[i] >= save.unlocked[i];
       };
       dn.onclick = () => { chosen[i]--; sync(); };
       up.onclick = () => { chosen[i]++; sync(); };
@@ -588,5 +678,5 @@ if (typeof document !== 'undefined') (function () {
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch (e) {}
   }
-  window.__game = { S, startLevel, step, cellAt, get L() { return L; }, get state() { return state; } };
+  window.__game = { S, startLevel, step, cellAt, hits, floorOf, get L() { return L; }, get state() { return state; } };
 })();
